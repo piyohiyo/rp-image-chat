@@ -40,7 +40,7 @@ PCのブラウザで <http://127.0.0.1:8199/> を開きます。ComfyUIのAPIは
 | `RPCHAT_PORT` | `8199` | チャットサーバーのポート |
 | `RPCHAT_HOST` | `127.0.0.1` | 待受アドレス。`lan`を指定するとPCのLAN用IPv4アドレスを選びます |
 
-スマホから開く場合は、サーバー起動前に`RPCHAT_HOST=lan`を設定します。Windowsなら`start_mobile.bat`でも起動できます。サーバーに表示されたURLを、同じLANにつないだスマホで開いてください。LANモードには認証機能がないため、信頼できるネットワークで使用してください。
+スマホから開く場合は、サーバー起動前に`RPCHAT_HOST=lan`を設定します。Windowsなら`start_mobile.bat`でも起動できます。サーバーに表示されたURLを、同じLANにつないだスマホで開いてください。初回アクセス時には、サーバーの画面に表示された`LAN access token`を入力します。トークンはPCの`data/access_token`に保存され、Gitには公開されません。`RPCHAT_TOKEN`環境変数で任意のトークンを指定することもできます。LAN通信はHTTPなので、信頼できるネットワークで使用してください。
 
 ## AI応答のJSON形式
 

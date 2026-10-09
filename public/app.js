@@ -12,10 +12,36 @@ let ragCollections = [];
 let ragSelected = null;
 let ragEditingEntry = null;
 const seen = JSON.parse(localStorage.getItem("seenRev") || "{}");
+let authPromise = null;
+let authCancelled = false;
+
+async function authenticate() {
+  if (authCancelled) throw new Error("認証をキャンセルしました。再試行するにはページを再読み込みしてください。");
+  if (!authPromise) authPromise = (async () => {
+    while (true) {
+      const token = prompt("サーバーの画面に表示された LAN access token を入力してください");
+      if (token === null) {
+        authCancelled = true;
+        throw new Error("認証をキャンセルしました");
+      }
+      const response = await fetch("/api/auth", {
+        method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ token })
+      });
+      if (response.ok) return;
+      alert("トークンが違います。もう一度入力してください。");
+    }
+  })();
+  try { await authPromise; }
+  finally { authPromise = null; }
+}
 
 async function api(path, body) {
   const opt = body ? { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) } : {};
-  const r = await fetch(path, opt);
+  let r = await fetch(path, opt);
+  if (r.status === 401) {
+    await authenticate();
+    r = await fetch(path, opt);
+  }
   return r.json();
 }
 const post = (path, body = {}) => api(path, { sid, ...body });

@@ -8,19 +8,24 @@ AI側の待機用。どれかのチャンネルに新しい入力が来るまで
    "memo": "これまでの進行・重要な事実（毎回まるごと書き直す）"}   # 任意
 """
 import json, os, sys, time, urllib.request
-from server import rag_context
+from server import rag_context, bind_host, access_token, AUTH_REQUIRED
 
-URL = "http://127.0.0.1:" + os.environ.get("RPCHAT_PORT", "8199")
+host = bind_host()
+if host in ("0.0.0.0", "::"):
+    host = "127.0.0.1"
+URL = os.environ.get("RPCHAT_AGENT_URL", "http://" + host + ":" + os.environ.get("RPCHAT_PORT", "8199"))
+HEADERS = {"X-RPChat-Token": access_token()} if AUTH_REQUIRED else {}
 CONTEXT = 10
 sys.stdout.reconfigure(encoding="utf-8")
 
 
 def get(p):
-    return json.loads(urllib.request.urlopen(URL + p, timeout=10).read())
+    req = urllib.request.Request(URL + p, headers=HEADERS)
+    return json.loads(urllib.request.urlopen(req, timeout=10).read())
 
 
 def post(p, d):
-    req = urllib.request.Request(URL + p, data=json.dumps(d).encode("utf-8"), headers={"Content-Type": "application/json"})
+    req = urllib.request.Request(URL + p, data=json.dumps(d).encode("utf-8"), headers={"Content-Type": "application/json", **HEADERS})
     return json.loads(urllib.request.urlopen(req, timeout=10).read())
 
 
