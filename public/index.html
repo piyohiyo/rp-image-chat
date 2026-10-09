@@ -1,0 +1,118 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>RP Image Chat</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<aside id="sidebar">
+  <div class="side-head">
+    <span>チャンネル</span>
+    <button id="newSession" title="新しいチャンネル">＋</button>
+  </div>
+  <div id="sessionList"></div>
+</aside>
+
+<div id="app">
+  <header>
+    <button id="sideToggle" class="sub" title="チャンネル一覧">☰</button>
+    <h1 id="title">RP Image Chat</h1>
+    <div class="header-right">
+      <span id="statusPill" class="pill">接続中…</span>
+      <button id="rpToggle" title="背景に最新画像を表示">RP表示</button>
+      <button id="ragToggle" title="知識ベースを管理">RAG <span id="ragCount">0</span></button>
+      <button id="settingsToggle">設定</button>
+    </div>
+  </header>
+
+  <section id="settingsPanel" class="hidden">
+    <div class="form">
+      <label>タイトル<input id="f_title"></label>
+      <label>概要 <span class="muted">このチャンネルがどんな話か。AIが毎回読む</span>
+        <textarea id="f_summary" rows="3"></textarea></label>
+      <label>指示 <span class="muted">AIへの書き方・方針（文体、長さ、画像の傾向など）</span>
+        <textarea id="f_instructions" rows="3"></textarea></label>
+      <label>AIメモ <span class="muted">進行・あらすじ。AIが応答ごとに更新（手で直してもOK）</span>
+        <textarea id="f_memo" rows="3"></textarea></label>
+      <div class="grid2">
+        <label>あなたの呼び名<input id="f_user_name"></label>
+        <label>キャラ名<input id="f_char_name"></label>
+        <label>年齢<input id="f_char_age"></label>
+        <label>口調<input id="f_char_speech"></label>
+      </div>
+      <label>キャラ設定<textarea id="f_char_profile" rows="2"></textarea></label>
+      <label>舞台・状況<textarea id="f_scenario" rows="2"></textarea></label>
+      <label>最初のメッセージ <span class="muted">会話リセット時に表示</span>
+        <textarea id="f_first_message" rows="2"></textarea></label>
+      <details>
+        <summary>画像設定 (JSON)</summary>
+        <textarea id="f_image" rows="10" spellcheck="false" class="mono"></textarea>
+      </details>
+    </div>
+    <div class="row">
+      <button id="settingSave">保存</button>
+      <button id="dupBtn" class="sub">このチャンネルを複製</button>
+      <button id="resetBtn" class="danger">会話リセット</button>
+      <button id="deleteSession" class="danger">チャンネル削除</button>
+      <span id="settingMsg" class="muted"></span>
+    </div>
+  </section>
+
+  <main id="chatLog"></main>
+
+  <footer>
+    <textarea id="messageInput" rows="2" placeholder="セリフや行動を入力…（Ctrl+Enterで送信）"></textarea>
+    <button id="sendBtn">送信</button>
+  </footer>
+</div>
+
+<div id="lightbox" class="hidden"><img id="lightboxImg" alt=""></div>
+
+<div id="promptModal" class="modal hidden">
+  <div class="modal-content">
+    <h2>画像プロンプト</h2>
+    <textarea id="promptEdit" spellcheck="false"></textarea>
+    <div class="hint" id="promptFinal"></div>
+    <div class="modal-actions">
+      <button id="promptCancel" class="sub">閉じる</button>
+      <button id="promptRegen">このプロンプトで再生成</button>
+    </div>
+  </div>
+</div>
+<div id="editModal" class="modal hidden">
+  <div class="modal-content">
+    <h2 id="editTitle">過去発言を編集</h2>
+    <p id="editHint" class="hint"></p>
+    <textarea id="editText" class="modal-textarea" rows="10"></textarea>
+    <div class="modal-actions">
+      <button id="editCancel" class="sub">キャンセル</button>
+      <button id="editSave">保存</button>
+    </div>
+  </div>
+</div>
+<div id="ragModal" class="modal hidden">
+  <div class="modal-content rag-modal">
+    <h2>RAG 知識ベース</h2>
+    <p class="hint">選択したコレクションは、このチャンネルの次のAI応答から参照されます。</p>
+    <div class="rag-layout">
+      <div class="rag-left">
+        <div class="rag-create"><input id="ragName" placeholder="新しいコレクション"><button id="ragCreate">＋</button></div>
+        <div id="ragCollections"></div>
+      </div>
+      <div class="rag-right">
+        <div id="ragEntries" class="rag-entries"></div>
+        <div id="ragEditor" class="hidden">
+          <input id="ragEntryTitle" placeholder="タイトル">
+          <textarea id="ragEntryContent" rows="6" placeholder="内容"></textarea>
+          <div class="modal-actions"><button id="ragEditCancel" class="sub">キャンセル</button><button id="ragEntrySave">保存</button></div>
+        </div>
+      </div>
+    </div>
+    <div class="modal-actions"><button id="ragClose" class="sub">閉じる</button></div>
+  </div>
+</div>
+<script src="app.js"></script>
+</body>
+</html>
