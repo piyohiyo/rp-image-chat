@@ -1,57 +1,57 @@
 # RP Image Chat
 
-A small, standard-library Python chat UI that exchanges roleplay messages with an external AI through JSON files and generates scene images with a local ComfyUI server.
+外部のAIとJSONファイルでメッセージを受け渡しし、ローカルのComfyUIで場面画像を生成する、シンプルなロールプレイ用チャットアプリです。サーバーはPython標準ライブラリだけで動きます。
 
-The UI can run on a PC or a phone on the same LAN. Conversations and RAG collections stay on the PC. **This repository does not include Gemini/Antigravity authentication or an automatic agent runner.** You supply an AI agent that reads `wait_input.py` output and writes reply JSON to `outbox/`.
+画面はPCでも、同じLANにつないだスマホでも開けます。会話履歴とRAGのデータはPCに保存されます。**このリポジトリにはGemini・Antigravityの認証処理や、AIエージェントの自動起動処理は含まれていません。** `wait_input.py`の出力を読み、`outbox/`に応答JSONを書き込むAIエージェントを別途用意してください。
 
-## How it works
+## 動作の流れ
 
-1. The browser sends a message to `server.py`, which stores it in `data/sessions/<session-id>.json` as pending.
-2. Run `python wait_input.py` from your AI agent. It waits for an input, claims it, then prints the channel settings, selected RAG entries, recent conversation, and the new message.
-3. The AI agent writes a JSON reply to `outbox/<unique-name>.json`.
-4. The server imports the reply. If it contains an image prompt, the server sends a workflow to ComfyUI and displays the output image in the chat.
+1. ブラウザから送信した入力を`server.py`が受け取り、`data/sessions/<セッションID>.json`に保存します。
+2. AI側で`python wait_input.py`を実行します。入力が届くと、チャンネル設定、選択中のRAG情報、直近の会話と新しい入力を表示します。
+3. AI側で`outbox/<任意の名前>.json`に応答を書きます。
+4. サーバーが応答を取り込みます。画像プロンプトがあればComfyUIへ送信し、生成画像をチャットに表示します。
 
-`wait_input.py` exits after one message. Call it again for the next turn. Use one consumer at a time unless you coordinate multiple agents yourself.
+`wait_input.py`は入力を1件受け取ると終了します。次の入力を待つときは再実行してください。複数のAI側プロセスで同時に待機させる場合は、受け取りの重複を避けるための調整が必要です。
 
-## Requirements
+## 必要なもの
 
-- Python 3.10 or newer. The chat server has no pip dependencies.
-- A running [ComfyUI](https://github.com/comfyanonymous/ComfyUI) instance for image generation. Text-only replies work without it.
-- A checkpoint installed in ComfyUI. Set its filename in each channel's image settings. IPAdapter is optional and needs the corresponding ComfyUI custom nodes.
-- An AI agent or script to produce the `outbox/` replies. The AI connection is deliberately external to this project.
+- Python 3.10以降。チャットサーバーに追加のpipパッケージは不要です。
+- 画像を生成する場合は、起動済みの[ComfyUI](https://github.com/comfyanonymous/ComfyUI)。テキストだけの応答ならComfyUIなしでも使えます。
+- ComfyUIに導入したチェックポイント。ファイル名を各チャンネルの画像設定で指定します。IPAdapterを使う場合は対応するComfyUIのカスタムノードも必要です。
+- `outbox/`へ応答を書き込むAIエージェント、またはスクリプト。AIとの接続部分はこのアプリの外にあります。
 
-## Start
+## 起動方法
 
-Clone the repository, then run from its directory:
+リポジトリを取得し、そのフォルダで次を実行します。
 
 ```powershell
-$env:COMFYUI_OUTPUT_DIR = 'D:\ComfyUI\output' # change to your ComfyUI output folder
+$env:COMFYUI_OUTPUT_DIR = 'D:\ComfyUI\output' # 自分のComfyUIの出力フォルダに変更
 python .\server.py
 ```
 
-Open <http://127.0.0.1:8199/> on the PC. The default ComfyUI API address is <http://127.0.0.1:8188/>.
+PCのブラウザで <http://127.0.0.1:8199/> を開きます。ComfyUIのAPIは既定で <http://127.0.0.1:8188/> を使います。
 
-Optional environment variables:
+環境変数で設定を変更できます。
 
-| Variable | Default | Purpose |
+| 環境変数 | 初期値 | 内容 |
 | --- | --- | --- |
-| `COMFYUI_URL` | `http://127.0.0.1:8188` | ComfyUI API address |
-| `COMFYUI_OUTPUT_DIR` | `../ComfyUI/output` relative to this repository | Folder where ComfyUI saves images |
-| `RPCHAT_PORT` | `8199` | Chat server port |
-| `RPCHAT_HOST` | `127.0.0.1` | Bind address; `lan` selects the PC's LAN IPv4 address |
+| `COMFYUI_URL` | `http://127.0.0.1:8188` | ComfyUIのAPIアドレス |
+| `COMFYUI_OUTPUT_DIR` | このリポジトリから見た`../ComfyUI/output` | ComfyUIの画像出力フォルダ |
+| `RPCHAT_PORT` | `8199` | チャットサーバーのポート |
+| `RPCHAT_HOST` | `127.0.0.1` | 待受アドレス。`lan`を指定するとPCのLAN用IPv4アドレスを選びます |
 
-To open the UI from a phone on the same local network, set `RPCHAT_HOST=lan` before starting the server, or run `start_mobile.bat` on Windows. Open the URL printed by the server. LAN mode exposes this unauthenticated app to devices on that network; use it only on a network you trust.
+スマホから開く場合は、サーバー起動前に`RPCHAT_HOST=lan`を設定します。Windowsなら`start_mobile.bat`でも起動できます。サーバーに表示されたURLを、同じLANにつないだスマホで開いてください。LANモードには認証機能がないため、信頼できるネットワークで使用してください。
 
-## Reply format
+## AI応答のJSON形式
 
-After `wait_input.py` prints a pending message, write a UTF-8 JSON file with the printed `session` and `reply_to` values:
+`wait_input.py`が入力を表示したら、出力に含まれる`session`と`reply_to`の値を使い、UTF-8のJSONファイルを作ります。
 
 ```json
 {
-  "session": "<session id>",
-  "reply_to": "<user message id>",
-  "text": "Assistant reply",
-  "memo": "Optional updated story summary",
+  "session": "<セッションID>",
+  "reply_to": "<ユーザー入力ID>",
+  "text": "AIの応答本文",
+  "memo": "任意の進行メモ",
   "image": {
     "prompt": "1girl, smiling, cafe",
     "width": 896,
@@ -61,13 +61,13 @@ After `wait_input.py` prints a pending message, write a UTF-8 JSON file with the
 }
 ```
 
-`image` is optional. With `raw: false`, the channel's base positive and character tags are prepended. With `raw: true`, the prompt is used as written. The negative prompt defaults to the channel's image settings.
+`image`は省略できます。`raw: false`では、チャンネル設定の共通タグとキャラクタータグをプロンプトの前に追加します。`raw: true`では、指定したプロンプトをそのまま使います。ネガティブプロンプトを省略した場合は、チャンネルの画像設定を使います。
 
-## UI features
+## 主な機能
 
-- Multiple channels with character, scenario, instruction, memo, and image settings
-- Edit a past user message and request a new reply; alter an assistant message or regenerate its reply
-- RAG collections with selectable entries per channel
-- Image history, new-seed generation, prompt editing, and a latest-image background mode
+- 複数チャンネルと、キャラクター・舞台・指示・メモ・画像設定の管理
+- 過去のユーザー入力の編集と再応答、AI応答の改変と再生成
+- チャンネルごとに選択できるRAGコレクション
+- 画像履歴、別シードでの再生成、プロンプト編集、最新画像を背景にするRP表示
 
-Local conversations, RAG data, and processed replies are stored under `data/` and `outbox/`. Both directories are ignored by Git.
+会話履歴、RAGデータ、取り込み済みの応答は`data/`と`outbox/`に保存されます。この2つのフォルダはGitの公開対象から除外しています。
