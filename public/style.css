@@ -25,6 +25,8 @@ body {
 @media (max-width: 760px) {
   #sidebar { position: fixed; left: -260px; top: 0; bottom: 0; z-index: 40; transition: left .2s; }
   body.side-open #sidebar { left: 0; }
+  #sideToggle { position: fixed; left: max(8px, env(safe-area-inset-left, 0px)); top: max(6px, env(safe-area-inset-top, 0px)); z-index: 50; }
+  body.side-open .side-head { padding-left: 48px; }
   .side-head .sidebar-close { display: inline-block; }
   #sidebarBackdrop { display: none; }
   body.side-open #sidebarBackdrop { display: block; position: fixed; inset: 0; z-index: 39; background: rgba(0,0,0,.58); }

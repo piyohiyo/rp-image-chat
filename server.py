@@ -242,7 +242,7 @@ def begin_handoff(sid, target_id):
                 if current["setting"].get("antigravity_session_id") != target_id:
                     return
                 path = write_handoff(current)
-            antigravity_call({"op": "handoff", "sessionId": target_id, "file": path}, timeout=90)
+            antigravity_call({"op": "handoff", "sessionId": target_id, "file": path}, timeout=930)
             error = ""
     except Exception as e:
         error = str(e)

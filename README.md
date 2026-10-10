@@ -2,21 +2,20 @@
 
 外部のAIとJSONファイルでメッセージを受け渡しし、ローカルのComfyUIで場面画像を生成する、シンプルなロールプレイ用チャットアプリです。サーバーはPython標準ライブラリだけで動きます。
 
-画面はPCでも、同じLANにつないだスマホでも開けます。会話履歴とRAGのデータはPCに保存されます。設定でAntigravity IDEの会話セッションを選ぶと、そのセッションに履歴ファイルを添付して引き継ぎ、入力をIDEへ送り、画面に表示された応答をチャットへ取り込みます。IDEのログイン情報やAPIキーは使わず、起動中のAntigravity IDEの画面をローカル接続で操作します。
+画面はPCでも、同じLANにつないだスマホでも開けます。会話履歴とRAGのデータはPCに保存されます。初期版と同じく入力はまずチャンネルの履歴ファイルに保存します。IDEセッションを指定していない場合は`wait_input.py`が保留入力を読み、AIエージェントの応答を`outbox/`から取り込みます。IDEセッションを指定した場合は、そのIDを`agy --conversation`へ明示して送受信します。IDE画面の入力欄をクリックして文字を打つ操作は行いません。
 
 ## 動作の流れ
 
 1. ブラウザから送信した入力を`server.py`が受け取り、`data/sessions/<セッションID>.json`に保存します。
-2. 設定からAntigravity IDEのセッションを選びます。セッションを切り替えると、それまでの全会話、チャンネル設定、選択中のRAG資料を`data/handoffs/`内のMarkdownに書き、選択先のIDE会話へ添付します。
-3. チャットから送信すると、そのIDEセッションに入力が送られます。IDEの応答が安定した時点でRP Chatにも取り込みます。
-4. IDE連携を設定しない場合は、従来どおり`wait_input.py`と`outbox/`を使う外部エージェント連携もできます。
-
+2. IDEセッションを選んだ場合は、チャンネルの設定・履歴・RAGを`data/handoffs/`のファイルにまとめ、選択した会話IDを指定して`agy`に渡します。
+3. 続く入力も同じ会話IDで送受信し、返答をRP Chatの履歴に保存します。選択IDをCLIに渡せない場合は送信エラーになり、別の最新セッションへ切り替えて送ることはありません。
+4. IDEセッションを選んでいない場合は、従来どおり`wait_input.py`と`outbox/`を使います。
 `wait_input.py`は入力を1件受け取ると終了します。次の入力を待つときは再実行してください。複数のAI側プロセスで同時に待機させる場合は、受け取りの重複を避けるための調整が必要です。
 
 ## 必要なもの
 
 - Python 3.10以降。チャットサーバーに追加のpipパッケージは不要です。
-- Antigravity IDE連携を使う場合はNode.js 20以降と、起動中のAntigravity IDEが必要です。IDEのローカルDevTools接続口を使います。連携を使わない場合、Node.jsは不要です。
+- IDEセッション一覧の取得にはNode.js 20以降と起動中のAntigravity IDEが必要です。指定セッションへの送受信にはログイン済みの`agy` CLIが必要です。セッションIDは`--conversation`で明示します。
 - 画像を生成する場合は、起動済みの[ComfyUI](https://github.com/comfyanonymous/ComfyUI)。テキストだけの応答ならComfyUIなしでも使えます。
 - ComfyUIに導入したチェックポイント。ファイル名を各チャンネルの画像設定で指定します。IPAdapterを使う場合は対応するComfyUIのカスタムノードも必要です。
 - 外部エージェント方式を使う場合は、`outbox/`へ応答を書き込むAIエージェントまたはスクリプト。
@@ -41,7 +40,7 @@ PCのブラウザで <http://127.0.0.1:8199/> を開きます。ComfyUIのAPIは
 | `RPCHAT_PORT` | `8199` | チャットサーバーのポート |
 | `RPCHAT_HOST` | `127.0.0.1` | 待受アドレス。`lan`を指定するとPCのLAN用IPv4アドレスを選びます |
 
-Antigravity連携は、Node.jsの`WebSocket`と`C:\Users\<ユーザー名>\AppData\Roaming\Antigravity\DevToolsActivePort`でIDE画面に接続します。IDEを再起動した場合も、接続情報は起動時に読み直します。セッション切替の引き継ぎファイルはローカルの`data/handoffs/`に残り、Gitの公開対象には入りません。
+Antigravity連携では、Node.jsの`WebSocket`をIDEのローカルDevTools接続口に使ってセッション一覧を読みます。メッセージの送信にはIDE画面を操作せず、`agy --conversation <選択ID>`を使います。セッション切替の引き継ぎファイルはローカルの`data/handoffs/`に残り、Gitの公開対象には入りません。
 
 スマホから開く場合は、サーバー起動前に`RPCHAT_HOST=lan`を設定します。Windowsなら`start_mobile.bat`でも起動できます。サーバーに表示されたURLを、同じLANにつないだスマホで開いてください。LAN内で認証なしに使える設定です。信頼できるネットワークで使用してください。
 

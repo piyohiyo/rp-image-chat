@@ -1,7 +1,9 @@
 #!/usr/bin/env node
-// Direct Antigravity IDE bridge using its local Chrome DevTools Protocol endpoint.
-// No extension or Antigravity CLI is used.
+// Read Antigravity IDE sessions via local DevTools; send turns with agy --conversation.
+// Message delivery never types into or clicks the IDE chat composer.
 const fs = require('node:fs');
+const path = require('node:path');
+const { spawnSync } = require('node:child_process');
 
 const delay = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
@@ -72,6 +74,43 @@ async function connect() {
   return cdp;
 }
 
+function findAgy() {
+  const candidates = [
+    process.env.AGY_PATH,
+    process.env.LOCALAPPDATA && path.join(process.env.LOCALAPPDATA, 'agy', 'bin', 'agy.exe'),
+  ].filter(Boolean);
+  for (const candidate of candidates) if (fs.existsSync(candidate)) return candidate;
+  const found = spawnSync('where.exe', ['agy.exe'], { encoding: 'utf8', windowsHide: true, timeout: 3000 });
+  const fromPath = (found.stdout || '').split(/\r?\n/).map((s) => s.trim()).find(Boolean);
+  if (fromPath) return fromPath;
+  throw new Error('agy.exeが見つかりません。Antigravity CLIをインストールしてください');
+}
+
+function sendViaCli(sessionId, message) {
+  if (!/^[0-9a-fA-F-]{36}$/.test(sessionId || '')) throw new Error('指定セッションIDが不正です');
+  const args = [
+    '--input-format', 'stream-json', '--output-format', 'stream-json',
+    '--print-timeout', '15m', '--conversation', sessionId,
+  ];
+  const input = JSON.stringify({ event: 'user', message: { content: message } }) + '\n';
+  const run = spawnSync(findAgy(), args, {
+    input, encoding: 'utf8', windowsHide: true, timeout: 930000, maxBuffer: 16 * 1024 * 1024,
+    env: { ...process.env, NO_COLOR: '1' },
+  });
+  if (run.error) throw new Error(run.error.message);
+  const events = (run.stdout || '').split(/\r?\n/).flatMap((line) => {
+    try { return [JSON.parse(line)]; } catch { return []; }
+  });
+  const final = [...events].reverse().find((event) => event.event === 'result')?.result;
+  if (run.status !== 0 || !final || final.status !== 'SUCCESS') {
+    throw new Error(final?.error || (run.stderr || '').trim().slice(-1800) || '指定したAntigravityセッションから応答がありません');
+  }
+  if (final.conversation_id && final.conversation_id.toLowerCase() !== sessionId.toLowerCase()) {
+    throw new Error('指定したIDと異なるAntigravityセッションが返りました。誤送信防止のため応答を採用しません');
+  }
+  return { reply: String(final.response || '').trim(), conversationId: final.conversation_id || sessionId };
+}
+
 async function listSessions(cdp) {
   const sessions = new Map();
   const oldTop = await cdp.evaluate(`(() => { const e=[...document.querySelectorAll('div')].find(x=>x.classList.contains('overflow-y-auto')&&x.classList.contains('overscroll-none')&&x.scrollHeight>x.clientHeight); return e?.scrollTop ?? 0 })()`);
@@ -86,94 +125,31 @@ async function listSessions(cdp) {
   return [...sessions.values()];
 }
 
-async function selectSession(cdp, id) {
-  const safeId = JSON.stringify(id);
-  return cdp.evaluate(`(() => { const e=[...document.querySelectorAll('[data-cascade-id].cursor-pointer.select-none')].find(x=>x.getAttribute('data-cascade-id')===${safeId}); if(!e)return false; e.click(); return true })()`);
-}
-
-async function attachFile(cdp, filePath) {
-  const path = require('node:path').resolve(filePath);
-  if (!fs.existsSync(path)) throw new Error('引き継ぎファイルが見つかりません');
-  const doc = await cdp.call('DOM.getDocument', { depth: -1, pierce: true });
-  const found = await cdp.call('DOM.querySelector', { nodeId: doc.root.nodeId, selector: 'input[type="file"]' });
-  if (!found.nodeId) throw new Error('IDEのファイル添付欄が見つかりません');
-  await cdp.call('DOM.setFileInputFiles', { nodeId: found.nodeId, files: [path] });
-  await delay(500);
-}
-
-async function sendText(cdp, text) {
-  const composer = await cdp.evaluate(`(() => { const e=document.querySelector('[role="combobox"][aria-label="Message input"]'); if(!e)return false; e.focus(); return true })()`);
-  if (!composer) throw new Error('IDEのチャット入力欄が見つかりません');
-  await cdp.call('Input.insertText', { text });
-  await delay(100);
-  const sent = await cdp.evaluate(`(() => { const e=document.querySelector('button[aria-label="Send message"]'); if(!e||e.disabled)return false; e.click(); return true })()`);
-  if (!sent) throw new Error('IDEの送信ボタンが使えません');
-}
-
-async function latestReply(cdp) {
-  return cdp.evaluate(`(() => { const a=Array.from(document.querySelectorAll('[data-testid="commentable-content"]')).map(e=>(e.innerText||'').trim()).filter(Boolean); if(a.length)return a[a.length-1]; const b=Array.from(document.querySelectorAll('[data-testid="planner-response-text"]')).map(e=>(e.innerText||'').trim()).filter(Boolean); return b[b.length-1]||'' })()`);
-}
-
-async function waitReply(cdp, before, timeoutMs = 900000) {
-  const started = Date.now();
-  let candidate = '';
-  let stableSince = 0;
-  while (Date.now() - started < timeoutMs) {
-    await delay(1200);
-    const current = await latestReply(cdp);
-    const composerReady = await cdp.evaluate(`(() => { const e=document.querySelector('[role="combobox"][aria-label="Message input"]'); const b=document.querySelector('button[aria-label="Send message"]'); return !!e && !!b && !b.disabled && !(e.innerText||'').trim() })()`);
-    if (current && current !== before && composerReady) {
-      if (candidate === current) {
-        if (Date.now() - stableSince >= 2200) return current;
-      } else {
-        candidate = current;
-        stableSince = Date.now();
-      }
-    } else {
-      candidate = '';
-      stableSince = 0;
-    }
-  }
-  return '';
-}
-
 async function main() {
   const input = JSON.parse(fs.readFileSync(0, 'utf8') || '{}');
-  const cdp = await connect();
-  try {
-    if (input.op === 'list') {
+  if (input.op === 'list') {
+    const cdp = await connect();
+    try {
       const sessions = await listSessions(cdp);
       process.stdout.write(JSON.stringify({ ok: true, sessions }));
-      return;
-    }
-    if (input.op === 'select') {
-      const selected = await selectSession(cdp, input.sessionId);
-      if (!selected) throw new Error('指定したIDEセッションが一覧にありません。更新してください');
-      await delay(350);
-      process.stdout.write(JSON.stringify({ ok: true }));
-      return;
-    }
-    if (input.op === 'handoff') {
-      if (!await selectSession(cdp, input.sessionId)) throw new Error('指定したIDEセッションが一覧にありません。更新してください');
-      await delay(350);
-      await attachFile(cdp, input.file);
-      await sendText(cdp, '添付した引き継ぎファイルを読んで、そこに記載された設定・会話履歴を踏まえてチャットを続けてください。');
-      await delay(350);
-      if (input.message) await sendText(cdp, input.message);
-      process.stdout.write(JSON.stringify({ ok: true }));
-      return;
-    }
-    if (input.op === 'send') {
-      if (!await selectSession(cdp, input.sessionId)) throw new Error('指定したIDEセッションが一覧にありません。更新してください');
-      await delay(200);
-      const before = await latestReply(cdp);
-      await sendText(cdp, input.message || '');
-      const reply = await waitReply(cdp, before, input.timeoutMs || 900000);
-      process.stdout.write(JSON.stringify({ ok: true, reply }));
-      return;
-    }
-    throw new Error('unknown operation');
-  } finally { cdp.close(); }
+    } finally { cdp.close(); }
+    return;
+  }
+  if (input.op === 'handoff') {
+    const file = path.resolve(input.file || '');
+    if (!fs.existsSync(file)) throw new Error('引き継ぎファイルが見つかりません');
+    const context = fs.readFileSync(file, 'utf8');
+    const message = `以下はRP Chatからの引き継ぎデータです。設定・会話・RAGを文脈として読み込み、以後この会話を続けてください。\n\n${context}`;
+    const result = sendViaCli(input.sessionId, message);
+    process.stdout.write(JSON.stringify({ ok: true, ...result }));
+    return;
+  }
+  if (input.op === 'send') {
+    const result = sendViaCli(input.sessionId, input.message || '');
+    process.stdout.write(JSON.stringify({ ok: true, ...result }));
+    return;
+  }
+  throw new Error('unknown operation');
 }
 
 main().catch((error) => {
