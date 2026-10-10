@@ -47,17 +47,6 @@
       <label>最初のメッセージ <span class="muted">会話リセット時に表示</span>
         <textarea id="f_first_message" rows="2"></textarea></label>
       <details>
-        <summary>Antigravity CLI 連携</summary>
-        <label><span><input id="f_agent_enabled" type="checkbox"> このチャンネルでagyを使う</span>
-          <span class="muted">有効にすると、送信した入力をPCのagy.exeへ直接渡します。</span></label>
-        <label>作業フォルダ<input id="f_agent_folder" placeholder="例: D:\\MyProject"></label>
-        <label>会話ID<input id="f_agent_conversation" placeholder="空欄なら次の送信で新規プロジェクトを開始"></label>
-        <div class="row"><button id="agentNewConversation" class="sub" type="button">新しいAI会話に切り替え</button>
-          <span id="f_agent_status" class="muted"></span></div>
-        <label>モデル指定（任意）<input id="f_agent_model" placeholder="空欄ならagyの既定モデル"></label>
-        <p class="muted">フォルダを指定し、保存してから送信してください。既存会話へ接続する場合は会話IDを入れます。</p>
-      </details>
-      <details>
         <summary>画像設定 (JSON)</summary>
         <textarea id="f_image" rows="10" spellcheck="false" class="mono"></textarea>
       </details>

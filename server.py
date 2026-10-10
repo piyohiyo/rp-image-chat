@@ -6,7 +6,7 @@ RP Image Chat - server (multi-session)
   - 応答に付いた画像プロンプトを ComfyUI に投げ、完成画像をセッションに反映
 標準ライブラリのみ。  python server.py
 """
-import json, os, threading, time, uuid, random, shutil, urllib.request, mimetypes, sys, copy, socket, secrets, re, subprocess, hashlib
+import json, os, threading, time, uuid, random, shutil, urllib.request, mimetypes, sys, copy, socket, secrets, re
 from http.server import ThreadingHTTPServer, BaseHTTPRequestHandler
 from urllib.parse import urlparse, parse_qs
 
@@ -26,21 +26,6 @@ PORT = int(os.environ.get("RPCHAT_PORT", "8199"))
 HOST = os.environ.get("RPCHAT_HOST", "127.0.0.1")
 AUTH_REQUIRED = HOST not in ("127.0.0.1", "localhost", "::1")
 ACCESS_TOKEN = None
-AGY_RESPONSE_SCHEMA = {
-    "type": "object",
-    "properties": {
-        "text": {"type": "string"},
-        "memo": {"type": "string"},
-        "image": {"anyOf": [
-            {"type": "null"},
-            {"type": "object", "properties": {
-                "prompt": {"type": "string"}, "negative": {"type": "string"},
-                "width": {"type": "integer"}, "height": {"type": "integer"}, "raw": {"type": "boolean"}
-            }, "required": ["prompt"], "additionalProperties": False}
-        ]}
-    },
-    "required": ["text", "memo", "image"], "additionalProperties": False
-}
 
 
 def bind_host():
@@ -83,7 +68,6 @@ DEFAULT_SETTING = {
     "scenario": "",
     "first_message": "",
     "rag_collections": [],
-    "agent": {"enabled": False, "folder": "", "conversation_id": "", "model": "", "context_hash": ""},
     "image": {
         "checkpoint": "waiIllustriousSDXL_v170.safetensors",
         "width": 896, "height": 1152, "steps": 30, "cfg": 7.0,
@@ -167,14 +151,6 @@ def find_msg(s, mid):
     return next((m for m in s["messages"] if m["id"] == mid), None)
 
 
-def reset_agent_conversation(s):
-    agent = s.get("setting", {}).setdefault("agent", {})
-    if isinstance(agent, dict):
-        agent["conversation_id"] = ""
-        agent["context_hash"] = ""
-        agent["last_error"] = ""
-
-
 def session_of_msg(mid):
     for sid in list_ids():
         s = load(sid)
@@ -226,187 +202,6 @@ def rag_context(setting):
             parts.append("【" + col.get("name", "") + "】")
             parts.extend("## " + e.get("title", "") + "\n" + e.get("content", "") for e in col["entries"])
     return "\n\n".join(parts)
-
-
-# ---------------------------------------------------------------- Antigravity CLI
-def find_agy():
-    configured = os.environ.get("AGY_PATH")
-    if configured:
-        return configured if os.path.isfile(configured) else None
-    for name in ("agy.exe", "agy"):
-        found = shutil.which(name)
-        if found:
-            return found
-    local = os.environ.get("LOCALAPPDATA", "")
-    candidate = os.path.join(local, "agy", "bin", "agy.exe") if local else ""
-    return candidate if candidate and os.path.isfile(candidate) else None
-
-
-def agent_context(setting):
-    ch = setting.get("character", {})
-    lines = [
-        "この会話はRP Chatのチャンネルです。以後は設定と会話の流れを引き継いで返答してください。",
-        "ユーザー名: " + str(setting.get("user_name", "あなた")),
-        "キャラクター: " + str(ch.get("name", "")),
-        "年齢: " + str(ch.get("age", "")),
-        "キャラクター設定: " + str(ch.get("profile", "")),
-        "口調: " + str(ch.get("speech", "")),
-        "舞台: " + str(setting.get("scenario", "")),
-        "概要: " + str(setting.get("summary", "")),
-        "応答指示: " + str(setting.get("instructions", "")),
-        "進行メモ: " + str(setting.get("memo", "")),
-    ]
-    refs = rag_context(setting)
-    if refs:
-        lines.extend(["RAG参照情報:", refs])
-    lines.extend([
-        "返答は画面に表示する本文・更新後の進行メモ・必要時の画像プロンプトとして返してください。",
-        "imageは画像が不要ならnullにし、必要な場合だけpromptを含むオブジェクトにしてください。"
-    ])
-    return "\n".join(x for x in lines if x and not x.endswith(": "))
-
-
-def agent_context_hash(setting):
-    stable = copy.deepcopy(setting)
-    stable["memo"] = ""
-    data = agent_context(stable).encode("utf-8")
-    return hashlib.sha256(data).hexdigest()
-
-
-def agent_prompt(s, user_message, agent):
-    setting = s["setting"]
-    conversation_id = agent.get("conversation_id", "").strip()
-    signature = agent_context_hash(setting)
-    memo_hash = hashlib.sha256(str(setting.get("memo", "")).encode("utf-8")).hexdigest()
-    if not conversation_id:
-        history = []
-        msgs = [m for m in s["messages"] if m.get("id") != user_message["id"]]
-        for m in msgs[-10:]:
-            role = "あなた" if m.get("role") == "user" else str(setting.get("character", {}).get("name") or "AI")
-            history.append(f"{role}: {str(m.get('text', '')).replace(chr(10), ' ')[:500]}")
-        prefix = agent_context(setting)
-        if history:
-            prefix += "\n直近の会話:\n" + "\n".join(history)
-    elif agent.get("context_hash") and (agent.get("context_hash") != signature or (agent.get("memo_hash") and agent.get("memo_hash") != memo_hash)):
-        prefix = "\n【チャンネル設定が更新されました】\n" + agent_context(setting)
-    else:
-        prefix = ""
-    return (prefix + "\n\n" if prefix else "") + user_message["text"], signature
-
-
-def process_agy():
-    target = None
-    with lock:
-        for sid in sorted(list_ids()):
-            s = load(sid)
-            agent = s["setting"].get("agent", {})
-            if not isinstance(agent, dict) or not agent.get("enabled"):
-                continue
-            msg = next((m for m in s["messages"] if m.get("role") == "user" and m.get("status") == "pending"), None)
-            if not msg:
-                continue
-            msg["status"] = "processing"
-            save(s)
-            target = (sid, msg["id"], s, copy.deepcopy(agent))
-            break
-    if not target:
-        return
-
-    sid, mid, s, agent = target
-    starting_conversation_id = agent.get("conversation_id", "").strip()
-    error = None
-    result = None
-    try:
-        folder = os.path.abspath(os.path.expanduser(agent.get("folder", "").strip()))
-        if not agent.get("folder") or not os.path.isdir(folder):
-            raise RuntimeError("設定した作業フォルダがありません。フォルダのパスを確認してください。")
-        executable = find_agy()
-        if not executable:
-            raise RuntimeError("agy.exe が見つかりません。Antigravity CLIをインストールするか AGY_PATH を設定してください。")
-        msg = find_msg(s, mid)
-        if not msg:
-            return
-        prompt, signature = agent_prompt(s, msg, agent)
-        args = [executable, "--input-format", "stream-json", "--output-format", "stream-json", "--print-timeout", "15m",
-                "--json-schema", json.dumps(AGY_RESPONSE_SCHEMA, separators=(",", ":"))]
-        conversation_id = starting_conversation_id
-        if conversation_id:
-            if not re.fullmatch(r"[A-Za-z0-9_-]{12,100}", conversation_id):
-                raise RuntimeError("会話IDの形式が正しくありません。設定でIDを確認してください。")
-            args.extend(["--conversation", conversation_id])
-        else:
-            args.append("--new-project")
-        model = agent.get("model", "").strip()
-        if model:
-            args.extend(["--model", model])
-        payload = json.dumps({"event": "user", "message": {"content": prompt}}, ensure_ascii=False) + "\n"
-        completed = subprocess.run(args, cwd=folder, input=payload, capture_output=True, text=True,
-                                   encoding="utf-8", errors="replace", timeout=930, check=False)
-        events = []
-        for line in completed.stdout.splitlines():
-            try:
-                events.append(json.loads(line))
-            except json.JSONDecodeError:
-                continue
-        for event in reversed(events):
-            if event.get("event") == "result" and isinstance(event.get("result"), dict):
-                result = event["result"]
-                break
-        if completed.returncode != 0 or not result:
-            detail = (completed.stderr or completed.stdout or "agy.exe did not return a result").strip()
-            raise RuntimeError(detail[-1200:])
-        if result.get("status") not in (None, "SUCCESS"):
-            raise RuntimeError(str(result.get("error") or result.get("status") or "agy.exe failed")[:1200])
-        reply = result.get("response")
-        if not isinstance(reply, str) or not reply.strip():
-            raise RuntimeError("agy.exe returned an empty response")
-        structured = json.loads(reply)
-        if not isinstance(structured, dict) or not isinstance(structured.get("text"), str):
-            raise RuntimeError("agy.exe returned an invalid response object")
-        new_conversation_id = result.get("conversation_id") or next(
-            (e.get("conversation_id") for e in events if e.get("event") == "init"), conversation_id)
-        if not isinstance(new_conversation_id, str) or not new_conversation_id:
-            raise RuntimeError("agy.exe did not return a conversation ID")
-        agent["conversation_id"] = new_conversation_id
-        agent["context_hash"] = signature
-        agent["memo_hash"] = hashlib.sha256(str(structured.get("memo", "")).encode("utf-8")).hexdigest()
-        agent["last_error"] = ""
-    except Exception as e:
-        error = str(e)
-
-    with lock:
-        if not os.path.exists(spath(sid)):
-            return
-        current = load(sid)
-        user_message = find_msg(current, mid)
-        if not user_message:
-            return
-        user_message["status"] = "error" if error else "answered"
-        if not error:
-            current_agent = current["setting"].setdefault("agent", {})
-            if current_agent.get("folder", "").strip() == agent.get("folder", "").strip() and current_agent.get("conversation_id", "").strip() == starting_conversation_id:
-                for key in ("conversation_id", "context_hash", "memo_hash", "last_error"):
-                    if key in agent:
-                        current_agent[key] = agent[key]
-            if isinstance(structured.get("memo"), str):
-                current["setting"]["memo"] = structured["memo"].strip()
-            reply_message = {"id": new_id(), "role": "assistant", "text": structured["text"].strip(), "ts": now()}
-            image = structured.get("image")
-            if isinstance(image, dict) and isinstance(image.get("prompt"), str) and image["prompt"].strip():
-                reply_message["image"] = {
-                    "prompt": image["prompt"].strip(), "negative": image.get("negative"),
-                    "width": image.get("width"), "height": image.get("height"),
-                    "raw": bool(image.get("raw", False)), "status": "queued"
-                }
-            current["messages"].append(reply_message)
-        else:
-            current["setting"].setdefault("agent", {})["last_error"] = error[:1200]
-            current["messages"].append({"id": new_id(), "role": "assistant", "text": "Antigravity CLI エラー: " + error[:1200], "ts": now()})
-        save(current)
-    if error:
-        print(f"[agy] error {sid}/{mid}: {error}")
-    else:
-        print(f"[agy] replied {sid}/{mid} conversation={agent.get('conversation_id', '')}")
 
 
 # ---------------------------------------------------------------- outbox
@@ -593,15 +388,6 @@ def worker():
         time.sleep(1)
 
 
-def agent_worker():
-    while True:
-        try:
-            process_agy()
-        except Exception as e:
-            print(f"[agy worker] {e}")
-        time.sleep(0.5)
-
-
 def summary_of(s):
     st = s["setting"]
     msgs = s["messages"]
@@ -786,7 +572,6 @@ class H(BaseHTTPRequestHandler):
                     try:
                         base = load(d["copy_from"])["setting"]
                         base = dict(base, title=base.get("title", "") + " (コピー)", memo="")
-                        base["agent"] = dict(base.get("agent") or {}, conversation_id="", context_hash="", last_error="")
                     except Exception:
                         pass
                 if d.get("title"):
@@ -821,7 +606,6 @@ class H(BaseHTTPRequestHandler):
                 m.setdefault("original_text", m["text"])
                 m["text"] = text.strip()
                 m["edited"] = True
-                reset_agent_conversation(s)
                 save(s)
                 return self.send_json({"ok": True})
             if p in ("/api/message/edit", "/api/message/regenerate"):
@@ -848,7 +632,6 @@ class H(BaseHTTPRequestHandler):
                     new_user["id"] = new_id()
                     new_user["status"] = "pending"
                     new_user["ts"] = now()
-                reset_agent_conversation(s)
                 save(s)
                 return self.send_json({"ok": True, "id": new_user["id"]})
             if p == "/api/rag/select":
@@ -893,7 +676,6 @@ class H(BaseHTTPRequestHandler):
             if p == "/api/reset":
                 s["messages"] = []
                 s["setting"]["memo"] = ""
-                reset_agent_conversation(s)
                 fm = s["setting"].get("first_message")
                 if fm:
                     s["messages"].append({"id": new_id(), "role": "assistant", "text": fm, "ts": now()})
@@ -916,7 +698,6 @@ def main():
     if not list_ids():
         create_session({"title": "チャンネル1"})
     threading.Thread(target=worker, daemon=True).start()
-    threading.Thread(target=agent_worker, daemon=True).start()
     host = bind_host()
     print(f"RP Image Chat: http://{host}:{PORT}/")
     if AUTH_REQUIRED:
