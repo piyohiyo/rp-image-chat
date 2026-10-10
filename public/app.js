@@ -11,6 +11,7 @@ let editTarget = null;
 let ragCollections = [];
 let ragSelected = null;
 let ragEditingEntry = null;
+let antigravitySessions = [];
 const seen = JSON.parse(localStorage.getItem("seenRev") || "{}");
 let authPromise = null;
 let authCancelled = false;
@@ -124,6 +125,21 @@ function fillForm(st) {
   for (const k of FIELDS) $("f_" + k).value = st[k] || "";
   for (const [id, k] of Object.entries(CHAR)) $("f_" + id).value = (st.character || {})[k] || "";
   $("f_image").value = JSON.stringify(st.image || {}, null, 2);
+  const targetId = st.antigravity_session_id || "";
+  if (targetId && !Array.from($("antigravitySession").options).some((o) => o.value === targetId)) {
+    const missing = document.createElement("option");
+    missing.value = targetId;
+    missing.textContent = "一覧にないセッション（更新してください）";
+    $("antigravitySession").appendChild(missing);
+  }
+  $("antigravitySession").value = targetId;
+  const status = st.antigravity_status || "";
+  const statusText = status === "switching" ? "履歴ファイルをIDEへ引き継いでいます…"
+    : status === "ready" ? "IDEセッションに接続しました。入力すると選択先へ送信します。"
+    : status === "sent" ? "IDEへ送信しました。応答を確認中です。"
+    : status === "error" ? (st.antigravity_error || "Antigravity連携でエラーが発生しました")
+    : targetId ? "選択したIDEセッションへ送信します。" : "セッションを選ぶと、このチャンネルの履歴・設定・RAG資料をファイル添付して引き継ぎます。";
+  $("antigravityStatus").textContent = statusText;
 }
 function readForm() {
   const st = JSON.parse(JSON.stringify(state.setting));
@@ -215,7 +231,7 @@ function render() {
 
     const meta = document.createElement("div");
     meta.className = "meta";
-    const st = m.role === "user" ? (m.status === "pending" ? " · 送信済" : m.status === "processing" ? " · 読込済" : "") : "";
+    const st = m.role === "user" ? (m.status === "pending" ? " · 送信済" : m.status === "processing" ? " · IDE処理中" : m.status === "sent" ? " · IDE送信済" : m.status === "error" ? " · IDE送信エラー: " + (m.error || "") : "") : "";
     meta.textContent = (m.ts || "").replace("T", " ").slice(5, 16) + st;
     wrap.appendChild(meta);
 
@@ -297,11 +313,41 @@ async function send() {
   const text = ta.value.trim();
   if (!text || !sid) return;
   $("sendBtn").disabled = true;
-  await post("/api/send", { text });
-  ta.value = "";
-  $("sendBtn").disabled = false;
-  await poll();
-  log.scrollTop = log.scrollHeight;
+  try {
+    await post("/api/send", { text });
+    ta.value = "";
+    await poll();
+    log.scrollTop = log.scrollHeight;
+  } catch (e) { alert(e.message); }
+  finally { $("sendBtn").disabled = false; }
+}
+
+async function refreshAntigravitySessions() {
+  const select = $("antigravitySession");
+  const previous = select.value || state?.setting?.antigravity_session_id || "";
+  $("antigravityRefresh").disabled = true;
+  $("antigravityStatus").textContent = "Antigravity IDEのセッション一覧を読み込み中…";
+  try {
+    const result = await checked("/api/antigravity/sessions");
+    antigravitySessions = result.sessions || [];
+    select.innerHTML = '<option value="">接続なし（従来の待ち受け）</option>';
+    for (const item of antigravitySessions) {
+      const option = document.createElement("option");
+      option.value = item.id;
+      option.textContent = item.title + (item.subtext ? " · " + item.subtext : "") + (item.selected ? "（IDEで開いている）" : "");
+      select.appendChild(option);
+    }
+    if (previous && !antigravitySessions.some((item) => item.id === previous)) {
+      const missing = document.createElement("option");
+      missing.value = previous;
+      missing.textContent = "一覧にないセッション（更新してください）";
+      select.appendChild(missing);
+    }
+    select.value = previous;
+    if (state) fillForm(state.setting);
+  } catch (e) {
+    $("antigravityStatus").textContent = "IDE一覧を取得できません: " + e.message;
+  } finally { $("antigravityRefresh").disabled = false; }
 }
 
 function openPrompt(m) {
@@ -455,6 +501,18 @@ $("messageInput").addEventListener("keydown", (e) => {
   if (e.key === "Enter" && (e.ctrlKey || e.metaKey)) { e.preventDefault(); send(); }
 });
 $("settingsToggle").onclick = () => $("settingsPanel").classList.toggle("hidden");
+$("antigravityRefresh").onclick = refreshAntigravitySessions;
+$("antigravitySession").onchange = async () => {
+  const sessionId = $("antigravitySession").value;
+  try {
+    await checked("/api/antigravity/target", { sid, sessionId });
+    $("antigravityStatus").textContent = sessionId ? "履歴・設定・RAGをファイルにしてIDEへ引き継いでいます…" : "Antigravity IDEとの接続を解除しました。";
+    await poll();
+  } catch (e) {
+    alert("セッションを切り替えられませんでした: " + e.message);
+    if (state) fillForm(state.setting);
+  }
+};
 $("ragToggle").onclick = openRag;
 $("ragClose").onclick = () => $("ragModal").classList.add("hidden");
 $("ragCreate").onclick = async () => {
@@ -516,6 +574,7 @@ $("promptRegen").onclick = async () => {
 (async () => {
   await refreshSessions();
   await poll();
+  refreshAntigravitySessions();
   setInterval(poll, 1500);
   setInterval(refreshSessions, 3000);
 })();

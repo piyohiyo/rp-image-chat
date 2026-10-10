@@ -2,23 +2,24 @@
 
 外部のAIとJSONファイルでメッセージを受け渡しし、ローカルのComfyUIで場面画像を生成する、シンプルなロールプレイ用チャットアプリです。サーバーはPython標準ライブラリだけで動きます。
 
-画面はPCでも、同じLANにつないだスマホでも開けます。会話履歴とRAGのデータはPCに保存されます。**このリポジトリにはGemini・Antigravityの認証処理や、AIエージェントの自動起動処理は含まれていません。** `wait_input.py`の出力を読み、`outbox/`に応答JSONを書き込むAIエージェントを別途用意してください。
+画面はPCでも、同じLANにつないだスマホでも開けます。会話履歴とRAGのデータはPCに保存されます。設定でAntigravity IDEの会話セッションを選ぶと、そのセッションに履歴ファイルを添付して引き継ぎ、入力をIDEへ送り、画面に表示された応答をチャットへ取り込みます。IDEのログイン情報やAPIキーは使わず、起動中のAntigravity IDEの画面をローカル接続で操作します。
 
 ## 動作の流れ
 
 1. ブラウザから送信した入力を`server.py`が受け取り、`data/sessions/<セッションID>.json`に保存します。
-2. AI側で`python wait_input.py`を実行します。入力が届くと、チャンネル設定、選択中のRAG情報、直近の会話と新しい入力を表示します。
-3. AI側で`outbox/<任意の名前>.json`に応答を書きます。
-4. サーバーが応答を取り込みます。画像プロンプトがあればComfyUIへ送信し、生成画像をチャットに表示します。
+2. 設定からAntigravity IDEのセッションを選びます。セッションを切り替えると、それまでの全会話、チャンネル設定、選択中のRAG資料を`data/handoffs/`内のMarkdownに書き、選択先のIDE会話へ添付します。
+3. チャットから送信すると、そのIDEセッションに入力が送られます。IDEの応答が安定した時点でRP Chatにも取り込みます。
+4. IDE連携を設定しない場合は、従来どおり`wait_input.py`と`outbox/`を使う外部エージェント連携もできます。
 
 `wait_input.py`は入力を1件受け取ると終了します。次の入力を待つときは再実行してください。複数のAI側プロセスで同時に待機させる場合は、受け取りの重複を避けるための調整が必要です。
 
 ## 必要なもの
 
 - Python 3.10以降。チャットサーバーに追加のpipパッケージは不要です。
+- Antigravity IDE連携を使う場合はNode.js 20以降と、起動中のAntigravity IDEが必要です。IDEのローカルDevTools接続口を使います。連携を使わない場合、Node.jsは不要です。
 - 画像を生成する場合は、起動済みの[ComfyUI](https://github.com/comfyanonymous/ComfyUI)。テキストだけの応答ならComfyUIなしでも使えます。
 - ComfyUIに導入したチェックポイント。ファイル名を各チャンネルの画像設定で指定します。IPAdapterを使う場合は対応するComfyUIのカスタムノードも必要です。
-- `outbox/`へ応答を書き込むAIエージェント、またはスクリプト。AIとの接続部分はこのアプリの外にあります。
+- 外部エージェント方式を使う場合は、`outbox/`へ応答を書き込むAIエージェントまたはスクリプト。
 
 ## 起動方法
 
@@ -39,6 +40,8 @@ PCのブラウザで <http://127.0.0.1:8199/> を開きます。ComfyUIのAPIは
 | `COMFYUI_OUTPUT_DIR` | このリポジトリから見た`../ComfyUI/output` | ComfyUIの画像出力フォルダ |
 | `RPCHAT_PORT` | `8199` | チャットサーバーのポート |
 | `RPCHAT_HOST` | `127.0.0.1` | 待受アドレス。`lan`を指定するとPCのLAN用IPv4アドレスを選びます |
+
+Antigravity連携は、Node.jsの`WebSocket`と`C:\Users\<ユーザー名>\AppData\Roaming\Antigravity\DevToolsActivePort`でIDE画面に接続します。IDEを再起動した場合も、接続情報は起動時に読み直します。セッション切替の引き継ぎファイルはローカルの`data/handoffs/`に残り、Gitの公開対象には入りません。
 
 スマホから開く場合は、サーバー起動前に`RPCHAT_HOST=lan`を設定します。Windowsなら`start_mobile.bat`でも起動できます。サーバーに表示されたURLを、同じLANにつないだスマホで開いてください。初回アクセス時には、サーバーの画面に表示された`LAN access token`を入力します。トークンはPCの`data/access_token`に保存され、Gitには公開されません。`RPCHAT_TOKEN`環境変数で任意のトークンを指定することもできます。LAN通信はHTTPなので、信頼できるネットワークで使用してください。
 

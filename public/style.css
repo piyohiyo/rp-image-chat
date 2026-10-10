@@ -52,7 +52,7 @@ button.sub { background: #44444c; }
 #settingsPanel.hidden { display: none; }
 .form { display: flex; flex-direction: column; gap: 8px; }
 .form label { display: flex; flex-direction: column; gap: 3px; font-size: 12px; color: #bbb; }
-.form input, .form textarea {
+.form input, .form textarea, .form select {
   background: #1a1a1e; color: #e6e6e6; border: 1px solid #44444c; border-radius: 6px;
   padding: 6px 8px; font: inherit; font-size: 13px; resize: vertical;
 }

@@ -6,7 +6,7 @@ RP Image Chat - server (multi-session)
   - 応答に付いた画像プロンプトを ComfyUI に投げ、完成画像をセッションに反映
 標準ライブラリのみ。  python server.py
 """
-import json, os, threading, time, uuid, random, shutil, urllib.request, mimetypes, sys, copy, socket, secrets, re
+import json, os, threading, time, uuid, random, shutil, urllib.request, mimetypes, sys, copy, socket, secrets, re, subprocess
 from http.server import ThreadingHTTPServer, BaseHTTPRequestHandler
 from urllib.parse import urlparse, parse_qs
 
@@ -19,6 +19,8 @@ LEGACY = os.path.join(DATA, "session.json")
 OUTBOX = os.path.join(ROOT, "outbox")
 DONE = os.path.join(OUTBOX, "done")
 TOKEN_FILE = os.path.join(DATA, "access_token")
+HANDOFF_DIR = os.path.join(DATA, "handoffs")
+BRIDGE_SCRIPT = os.path.join(ROOT, "antigravity_bridge.js")
 COMFY = os.environ.get("COMFYUI_URL", "http://127.0.0.1:8188").rstrip("/")
 COMFY_OUT = os.path.normpath(os.environ.get(
     "COMFYUI_OUTPUT_DIR", os.path.join(ROOT, "..", "ComfyUI", "output")))
@@ -57,6 +59,7 @@ def access_token():
     return token
 
 lock = threading.RLock()
+bridge_lock = threading.Lock()
 
 DEFAULT_SETTING = {
     "title": "新しいチャンネル",
@@ -68,6 +71,9 @@ DEFAULT_SETTING = {
     "scenario": "",
     "first_message": "",
     "rag_collections": [],
+    "antigravity_session_id": "",
+    "antigravity_status": "",
+    "antigravity_error": "",
     "image": {
         "checkpoint": "waiIllustriousSDXL_v170.safetensors",
         "width": 896, "height": 1152, "steps": 30, "cfg": 7.0,
@@ -202,6 +208,108 @@ def rag_context(setting):
             parts.append("【" + col.get("name", "") + "】")
             parts.extend("## " + e.get("title", "") + "\n" + e.get("content", "") for e in col["entries"])
     return "\n\n".join(parts)
+
+
+def antigravity_call(payload, timeout=900):
+    node = shutil.which("node")
+    if not node:
+        raise RuntimeError("Node.jsが見つかりません。Antigravity連携にNode.js 20以降が必要です")
+    result = subprocess.run(
+        [node, BRIDGE_SCRIPT], input=json.dumps(payload, ensure_ascii=False),
+        capture_output=True, text=True, encoding="utf-8", timeout=timeout,
+        cwd=ROOT, check=False,
+    )
+    try:
+        answer = json.loads(result.stdout)
+    except (ValueError, json.JSONDecodeError):
+        raise RuntimeError("Antigravity IDEから応答を取得できません")
+    if result.returncode or not answer.get("ok"):
+        raise RuntimeError(answer.get("error") or "Antigravity連携に失敗しました")
+    return answer
+
+
+def handoff_context(s):
+    setting = s.get("setting", {})
+    rag = []
+    for cid in setting.get("rag_collections", []):
+        try:
+            rag.append(load_rag(cid))
+        except (OSError, ValueError, json.JSONDecodeError):
+            continue
+    snapshot = {
+        "rpchat_channel": {"id": s["id"], "title": setting.get("title", "")},
+        "settings": setting,
+        "rag_collections": rag,
+        "conversation": [
+            {key: m.get(key) for key in ("role", "text", "ts", "edited", "image") if key in m}
+            for m in s.get("messages", [])
+        ],
+    }
+    return "# RP Chat セッション引き継ぎ\n\n次のJSONに、このチャンネルの設定、RAG資料、これまでの会話を記録しています。内容を会話の継続用コンテキストとして扱ってください。\n\n```json\n" + json.dumps(snapshot, ensure_ascii=False, indent=2) + "\n```\n"
+
+
+def write_handoff(s):
+    os.makedirs(HANDOFF_DIR, exist_ok=True)
+    name = f"{s['id']}_{int(time.time())}_{new_id()}.md"
+    path = os.path.join(HANDOFF_DIR, name)
+    with open(path, "w", encoding="utf-8") as f:
+        f.write(handoff_context(s))
+    return path
+
+
+def begin_handoff(sid, target_id):
+    try:
+        with bridge_lock:
+            with lock:
+                current = load(sid)
+                if current["setting"].get("antigravity_session_id") != target_id:
+                    return
+                path = write_handoff(current)
+            antigravity_call({"op": "handoff", "sessionId": target_id, "file": path}, timeout=90)
+            error = ""
+    except Exception as e:
+        error = str(e)
+    with lock:
+        try:
+            current = load(sid)
+        except (FileNotFoundError, ValueError):
+            return
+        if current["setting"].get("antigravity_session_id") != target_id:
+            return
+        current["setting"]["antigravity_status"] = "error" if error else "ready"
+        current["setting"]["antigravity_error"] = error
+        save(current)
+
+
+def deliver_to_antigravity(sid, mid, target_id, text):
+    error = ""
+    reply = ""
+    try:
+        with bridge_lock:
+            result = antigravity_call({"op": "send", "sessionId": target_id, "message": text}, timeout=930)
+            reply = result.get("reply", "").strip()
+    except Exception as e:
+        error = str(e)
+    with lock:
+        try:
+            s = load(sid)
+        except (FileNotFoundError, ValueError):
+            return
+        m = find_msg(s, mid)
+        if not m:
+            return
+        if error:
+            m["status"] = "error"
+            m["error"] = error
+            s["setting"]["antigravity_status"] = "error"
+            s["setting"]["antigravity_error"] = error
+        else:
+            m["status"] = "answered" if reply else "sent"
+            if reply:
+                s["messages"].append({"id": new_id(), "role": "assistant", "text": reply, "ts": now(), "source": "antigravity"})
+            s["setting"]["antigravity_status"] = "ready" if reply else "sent"
+            s["setting"]["antigravity_error"] = ""
+        save(s)
 
 
 # ---------------------------------------------------------------- outbox
@@ -457,6 +565,8 @@ class H(BaseHTTPRequestHandler):
         if (p.startswith("/api/") or p == "/img") and not self.authenticated():
             return self.send_json({"error": "authentication required"}, 401)
         try:
+            if p == "/api/antigravity/sessions":
+                return self.send_json(antigravity_call({"op": "list"}, timeout=30))
             if p == "/api/sessions":
                 with lock:
                     items = [summary_of(load(sid)) for sid in list_ids()]
@@ -592,9 +702,12 @@ class H(BaseHTTPRequestHandler):
                 text = (d.get("text") or "").strip()
                 if not text:
                     return self.send_json({"error": "empty"}, 400)
-                m = {"id": new_id(), "role": "user", "text": text, "ts": now(), "status": "pending"}
+                target_id = s["setting"].get("antigravity_session_id")
+                m = {"id": new_id(), "role": "user", "text": text, "ts": now(), "status": "processing" if target_id else "pending"}
                 s["messages"].append(m)
                 save(s)
+                if target_id:
+                    threading.Thread(target=deliver_to_antigravity, args=(s["id"], m["id"], target_id, text), daemon=True).start()
                 return self.send_json({"ok": True, "id": m["id"]})
             if p == "/api/message/alter":
                 m = find_msg(s, d.get("id"))
@@ -673,6 +786,20 @@ class H(BaseHTTPRequestHandler):
                 s["setting"] = merge_defaults(d.get("setting", s["setting"]))
                 save(s)
                 return self.send_json({"ok": True})
+            if p == "/api/antigravity/target":
+                target_id = d.get("sessionId", "")
+                if not isinstance(target_id, str) or (target_id and not re.fullmatch(r"[0-9a-fA-F-]{36}", target_id)):
+                    return self.send_json({"error": "IDEセッションIDが不正です"}, 400)
+                previous_id = s["setting"].get("antigravity_session_id", "")
+                if target_id == previous_id:
+                    return self.send_json({"ok": True, "changed": False})
+                s["setting"]["antigravity_session_id"] = target_id
+                s["setting"]["antigravity_status"] = "switching" if target_id else "disconnected"
+                s["setting"]["antigravity_error"] = ""
+                save(s)
+                if target_id:
+                    threading.Thread(target=begin_handoff, args=(s["id"], target_id), daemon=True).start()
+                return self.send_json({"ok": True, "changed": True})
             if p == "/api/reset":
                 s["messages"] = []
                 s["setting"]["memo"] = ""
