@@ -6,7 +6,7 @@ RP Image Chat - server (multi-session)
   - 応答に付いた画像プロンプトを ComfyUI に投げ、完成画像をセッションに反映
 標準ライブラリのみ。  python server.py
 """
-import json, os, threading, time, uuid, random, shutil, urllib.request, mimetypes, sys, copy, socket, secrets, re, subprocess
+import json, os, threading, time, uuid, random, shutil, urllib.request, mimetypes, sys, copy, socket, re, subprocess
 from http.server import ThreadingHTTPServer, BaseHTTPRequestHandler
 from urllib.parse import urlparse, parse_qs
 
@@ -18,7 +18,6 @@ RAG_DIR = os.path.join(DATA, "rag")
 LEGACY = os.path.join(DATA, "session.json")
 OUTBOX = os.path.join(ROOT, "outbox")
 DONE = os.path.join(OUTBOX, "done")
-TOKEN_FILE = os.path.join(DATA, "access_token")
 HANDOFF_DIR = os.path.join(DATA, "handoffs")
 BRIDGE_SCRIPT = os.path.join(ROOT, "antigravity_bridge.js")
 COMFY = os.environ.get("COMFYUI_URL", "http://127.0.0.1:8188").rstrip("/")
@@ -26,8 +25,6 @@ COMFY_OUT = os.path.normpath(os.environ.get(
     "COMFYUI_OUTPUT_DIR", os.path.join(ROOT, "..", "ComfyUI", "output")))
 PORT = int(os.environ.get("RPCHAT_PORT", "8199"))
 HOST = os.environ.get("RPCHAT_HOST", "127.0.0.1")
-AUTH_REQUIRED = HOST not in ("127.0.0.1", "localhost", "::1")
-ACCESS_TOKEN = None
 
 
 def bind_host():
@@ -37,26 +34,6 @@ def bind_host():
         sock.connect(("192.0.2.1", 80))
         return sock.getsockname()[0]
 
-
-def access_token():
-    """Use a local, Git-ignored token for LAN access and the agent bridge."""
-    configured = os.environ.get("RPCHAT_TOKEN")
-    if configured is not None:
-        if not re.fullmatch(r"[A-Za-z0-9_-]{32,}", configured):
-            raise ValueError("RPCHAT_TOKEN must contain at least 32 URL-safe characters")
-        return configured
-    os.makedirs(DATA, exist_ok=True)
-    try:
-        with open(TOKEN_FILE, encoding="ascii") as f:
-            token = f.read().strip()
-        if len(token) >= 32:
-            return token
-    except FileNotFoundError:
-        pass
-    token = secrets.token_urlsafe(32)
-    with open(TOKEN_FILE, "w", encoding="ascii") as f:
-        f.write(token)
-    return token
 
 lock = threading.RLock()
 bridge_lock = threading.Lock()
@@ -514,14 +491,6 @@ class H(BaseHTTPRequestHandler):
     def log_message(self, *a):
         pass
 
-    def authenticated(self):
-        if not AUTH_REQUIRED:
-            return True
-        header_token = self.headers.get("X-RPChat-Token", "")
-        cookie = self.headers.get("Cookie", "")
-        cookie_token = next((part.strip()[13:] for part in cookie.split(";") if part.strip().startswith("rpchat_token=")), "")
-        return secrets.compare_digest(header_token, ACCESS_TOKEN) or secrets.compare_digest(cookie_token, ACCESS_TOKEN)
-
     def same_origin(self):
         origin = self.headers.get("Origin")
         if not origin:
@@ -562,8 +531,6 @@ class H(BaseHTTPRequestHandler):
     def do_GET(self):
         u = urlparse(self.path)
         p, q = u.path, parse_qs(u.query)
-        if (p.startswith("/api/") or p == "/img") and not self.authenticated():
-            return self.send_json({"error": "authentication required"}, 401)
         try:
             if p == "/api/antigravity/sessions":
                 return self.send_json(antigravity_call({"op": "list"}, timeout=30))
@@ -618,19 +585,6 @@ class H(BaseHTTPRequestHandler):
             d = self.body()
         except (ValueError, UnicodeDecodeError):
             return self.send_json({"error": "invalid request body"}, 400)
-        if p == "/api/auth":
-            if not AUTH_REQUIRED or (isinstance(d.get("token"), str) and secrets.compare_digest(d["token"], ACCESS_TOKEN)):
-                self.send_response(200)
-                self.send_header("Content-Type", "application/json; charset=utf-8")
-                self.send_header("Cache-Control", "no-store")
-                if AUTH_REQUIRED:
-                    self.send_header("Set-Cookie", f"rpchat_token={ACCESS_TOKEN}; HttpOnly; SameSite=Strict; Path=/")
-                self.end_headers()
-                self.wfile.write(b'{"ok":true}')
-                return
-            return self.send_json({"error": "invalid access token"}, 401)
-        if not self.authenticated():
-            return self.send_json({"error": "authentication required"}, 401)
         with lock:
             if p == "/api/rag/create":
                 name = d.get("name", "")
@@ -812,12 +766,9 @@ class H(BaseHTTPRequestHandler):
 
 
 def main():
-    global ACCESS_TOKEN
     os.makedirs(SESS_DIR, exist_ok=True)
     os.makedirs(RAG_DIR, exist_ok=True)
     os.makedirs(DONE, exist_ok=True)
-    if AUTH_REQUIRED:
-        ACCESS_TOKEN = access_token()
     # 旧形式の data/session.json は取り込まずに退避だけする
     if os.path.exists(LEGACY):
         shutil.move(LEGACY, os.path.join(DATA, f"session_legacy_{int(time.time())}.json"))
@@ -827,8 +778,6 @@ def main():
     threading.Thread(target=worker, daemon=True).start()
     host = bind_host()
     print(f"RP Image Chat: http://{host}:{PORT}/")
-    if AUTH_REQUIRED:
-        print(f"LAN access token: {ACCESS_TOKEN}")
     ThreadingHTTPServer((host, PORT), H).serve_forever()
 
 
