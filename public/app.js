@@ -124,6 +124,12 @@ function fillForm(st) {
   for (const k of FIELDS) $("f_" + k).value = st[k] || "";
   for (const [id, k] of Object.entries(CHAR)) $("f_" + id).value = (st.character || {})[k] || "";
   $("f_image").value = JSON.stringify(st.image || {}, null, 2);
+  const agent = st.agent || {};
+  $("f_agent_enabled").checked = !!agent.enabled;
+  $("f_agent_folder").value = agent.folder || "";
+  $("f_agent_conversation").value = agent.conversation_id || "";
+  $("f_agent_model").value = agent.model || "";
+  $("f_agent_status").textContent = agent.last_error || (agent.conversation_id ? "既存会話に接続" : "新規会話を作成")
 }
 function readForm() {
   const st = JSON.parse(JSON.stringify(state.setting));
@@ -131,6 +137,11 @@ function readForm() {
   st.character = st.character || {};
   for (const [id, k] of Object.entries(CHAR)) st.character[k] = $("f_" + id).value;
   st.image = JSON.parse($("f_image").value);
+  st.agent = st.agent || {};
+  st.agent.enabled = $("f_agent_enabled").checked;
+  st.agent.folder = $("f_agent_folder").value.trim();
+  st.agent.conversation_id = $("f_agent_conversation").value.trim();
+  st.agent.model = $("f_agent_model").value.trim();
   return st;
 }
 document.querySelectorAll("#settingsPanel input, #settingsPanel textarea").forEach((el) =>
@@ -482,6 +493,11 @@ $("settingSave").onclick = async () => {
     await poll();
     refreshSessions();
   } catch (e) { flash("画像設定のJSONエラー: " + e.message); }
+};
+$("agentNewConversation").onclick = () => {
+  $("f_agent_conversation").value = "";
+  $("f_agent_status").textContent = "次の送信で新しい会話を開始（設定を保存してください）";
+  formDirty = true;
 };
 $("newSession").onclick = async () => {
   const title = prompt("チャンネル名", "新しいチャンネル");
