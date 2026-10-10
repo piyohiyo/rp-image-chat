@@ -4,16 +4,18 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>RP Image Chat</title>
-<link rel="stylesheet" href="style.css">
+<link rel="stylesheet" href="style.css?v=sidebar-close-1">
 </head>
 <body>
 <aside id="sidebar">
   <div class="side-head">
     <span>チャンネル</span>
+    <button id="sidebarClose" class="sidebar-close" title="一覧を閉じる" aria-label="チャンネル一覧を閉じる">閉じる</button>
     <button id="newSession" title="新しいチャンネル">＋</button>
   </div>
   <div id="sessionList"></div>
 </aside>
+<div id="sidebarBackdrop" aria-hidden="true"></div>
 
 <div id="app">
   <header>
@@ -120,6 +122,6 @@
     <div class="modal-actions"><button id="ragClose" class="sub">閉じる</button></div>
   </div>
 </div>
-<script src="app.js?v=antigravity-no-auth-1"></script>
+<script src="app.js?v=sidebar-close-1"></script>
 </body>
 </html>

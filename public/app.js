@@ -505,6 +505,11 @@ $("ragEditCancel").onclick = () => $("ragEditor").classList.add("hidden");
 $("editSave").onclick = saveEdit;
 $("editCancel").onclick = () => { editTarget = null; $("editModal").classList.add("hidden"); };
 $("sideToggle").onclick = () => document.body.classList.toggle("side-open");
+$("sidebarClose").onclick = () => document.body.classList.remove("side-open");
+$("sidebarBackdrop").onclick = () => document.body.classList.remove("side-open");
+document.addEventListener("keydown", (event) => {
+  if (event.key === "Escape") document.body.classList.remove("side-open");
+});
 $("rpToggle").onclick = () => { rpMode = !rpMode; localStorage.setItem("rpMode", rpMode ? "1" : "0"); render(); };
 $("settingSave").onclick = async () => {
   try {
