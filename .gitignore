@@ -1,0 +1,20 @@
+# Local conversations, knowledge bases, and completed AI replies
+/data/
+/outbox/
+/inbox/
+# Your own setting files and the Antigravity workspace folder
+/systemfiles/
+/session/
+
+# Python and local environment files
+__pycache__/
+*.py[cod]
+.env
+.venv/
+venv/
+
+# Editor and operating system files
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/

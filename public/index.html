@@ -1,0 +1,291 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover, interactive-widget=resizes-content">
+<title>RP Image Chat {{PORT}}</title>
+<link rel="icon" type="image/png" href="icon.png">
+<link rel="apple-touch-icon" href="icon-maskable-512.png">
+<link rel="stylesheet" href="style.css?v=13">
+</head>
+<body>
+<aside id="sidebar">
+  <div class="side-head">
+    <span>チャンネル</span>
+    <span class="row tight">
+      <button id="importBtn" class="sub" title="書き出した JSON を取り込む">取込</button>
+      <button id="newSession" title="新しいチャンネル">＋</button>
+    </span>
+  </div>
+  <input id="sessionFilter" class="side-filter" placeholder="絞り込み">
+  <div id="sessionList"></div>
+  <input id="importFile" type="file" accept=".json,application/json" hidden>
+</aside>
+
+<div id="app">
+  <header>
+    <button id="sideToggle" class="sub" title="チャンネル一覧">☰</button>
+    <h1 id="title">RP Image Chat</h1>
+    <div class="header-right">
+      <span id="statusPill" class="pill">接続中…</span>
+      <button id="rpToggle" title="背景に画像を表示">RP表示</button>
+      <button id="ragToggle" title="知識ベースを管理">RAG <span id="ragCount">0</span></button>
+      <button id="settingsToggle">設定</button>
+    </div>
+  </header>
+
+  <section id="settingsPanel" class="hidden">
+    <div class="form">
+      <div class="box ide-box">
+        <div class="box-title">AI（Antigravity）</div>
+        <span class="muted">Antigravityの会話を選ぶと、その会話だけがこのチャンネルの入力を受け取ります</span>
+        <div id="ideCurrent" class="ide-current">指定なし（--ide なしの wait_input.py が受け取る）</div>
+        <div class="row">
+          <button id="idePick" type="button" class="sub" title="Antigravity の会話をフォルダから選ぶ（検索・会話IDの直接入力もできる）">会話を選ぶ…</button>
+          <button id="ideNew" type="button" class="sub" title="Antigravity に新しい会話を作って担当にする（何も送らない。最初の入力で合図が届く）">新規会話</button>
+          <button id="ideFork" type="button" class="sub" title="担当の会話を途中の発言から分岐する（元の会話はそのまま。同じフォルダに新しい会話ができる）">分岐…</button>
+          <button id="ideRename" type="button" class="sub" title="担当の会話の名前を変える（Antigravity の一覧の名前が変わる。再起動は要らない）">名前…</button>
+          <button id="ideClear" type="button" class="sub" title="担当の会話を外す（会話は消えない）">外す</button>
+          <button id="ctxReset" type="button" class="sub" title="同じ担当のままでも、次の入力で設定と会話を全部送り直す（AIが忘れていそうなとき）">次は全部送る</button>
+        </div>
+        <span id="ideState" class="muted"></span>
+        <div class="row">
+          <span class="muted" title="会話IDを指定して送るので、ウィンドウやフォーカスは使わない。会話が応答中なら終わるのを待つ。合図が来るまで会話は止まっているので、待っている間は使用量を使わない">入力から2秒たっても受け取られていなければ、担当の会話に合図（スペース1文字）を送る</span>
+          <button id="idePokeNow" type="button" class="sub" title="今すぐ1回、担当IDE会話に半角スペースを送る（応答中なら送らない）">今すぐ合図</button>
+        </div>
+        <span id="pokeState" class="muted"></span>
+        <label title="担当の会話にもう見せたものは、どちらでも送り直さない。違うのは全部送るときと、続きのときに何を出すか">入力の渡し方<select id="f_input_mode">
+          <option value="diff">差分（全部のときは履歴とファイルの中身も出す。続きは増えた分と変わった分）</option>
+          <option value="light">今回の発言だけ（初回は直近15件を全文＋それより前はAIメモ、ファイルの設定と長い会話は場所を出して読ませる）</option>
+        </select></label>
+        <label class="check" title="発言の編集・削除・作り直し・ここまで巻き戻しをしたら、担当の Antigravity 会話もその発言の前のターンまで巻き戻す（会話の中身だけ。AI が書き換えたファイルは戻さない。巻き戻す前の会話データは data/trash/ide_revert に写す）。次の入力では設定と会話を全部送り直す"><input type="checkbox" id="f_ide_revert"> 発言を編集・削除したら Antigravity の会話も巻き戻す</label>
+        <label>作業フォルダ <span class="muted">「新規会話」を作る場所・AGENTS.md を置く場所。空なら session フォルダ（全チャンネル共通）。session の下の名前か絶対パスで別にもできる</span>
+          <input id="f_ide_folder" spellcheck="false"></label>
+        <label class="check" title="作業フォルダに AGENTS.md を置く。Antigravity はそのフォルダの会話で毎ターン読み直し、ルールとして守る（アプリが作ったしるしのないファイルは書き換えない）"><input type="checkbox" id="f_agents_md"> AGENTS.md を書き出す（System ファイルと下の文を、Antigravity が毎ターン読むルールにする）</label>
+        <label>ルールに足す文 <span class="muted">AGENTS.md の最後に入る（下のチェックがオンなら毎回の入力の最後にも付く）</span>
+          <textarea id="f_agents_extra" rows="2"></textarea></label>
+        <label class="check" title="上の文を、AI が wait_input.py で入力を受け取るたびに表示のいちばん最後に付ける。AGENTS.md と違ってチャンネルごとに効き、会話が長くなっても忘れにくい。そのかわり毎回その文字数を使う（1500字か25行を超えると、ファイルに書いて場所を出す）"><input type="checkbox" id="f_rules_every"> 入力のたびに最後にルールを付ける</label>
+        <span id="agentsState" class="muted"></span>
+        <div id="moveBox" class="move-box"></div>
+        <details>
+          <summary>AGENTS.md の中身</summary>
+          <pre id="agentsPreview" class="mono agents-pre"></pre>
+        </details>
+        <div class="grid2">
+          <label>画像<select id="f_image_mode">
+            <option value="always">毎回描く</option>
+            <option value="auto">見せ場だけ</option>
+            <option value="off">描かない</option>
+          </select></label>
+          <div class="field">
+            <div class="sub-label">&nbsp;</div>
+            <button id="previewBtn" type="button" class="sub">送る設定を確認</button>
+          </div>
+        </div>
+      </div>
+
+      <div class="box">
+        <div class="box-title">設定ファイル</div>
+        <div class="folder-row"><span class="muted">フォルダ（全チャンネル共通）</span><code id="sysRoot" class="folder-path"></code>
+          <button id="sysRootPick" type="button" class="sub">変更…</button></div>
+        <label>System ファイル <span class="muted">AIの基本の振る舞い</span>
+          <select id="f_system_file"></select></label>
+        <div class="sub-label">参照ファイル <span class="muted">一緒に読ませるファイル（複数可）</span></div>
+        <div id="refList" class="check-list"></div>
+      </div>
+
+      <div class="box">
+        <div class="box-title">読み込むファイル</div>
+        <div class="muted">下のフォルダの中から、AIに読ませるファイルを選ぶ（いくつでも）。選んだ順に読む。フォルダは全チャンネル共通（中の .md .txt を、下の階層まで探す）</div>
+        <div id="folderRows" class="folder-rows"></div>
+        <div class="row tight"><button id="folderAdd" type="button" class="sub">＋ フォルダを追加</button></div>
+        <div class="row tight">
+          <select id="presetSelect"><option value="">プリセット…</option></select>
+          <button id="presetLoad" type="button" class="sub">読込</button>
+          <button id="presetSave" type="button" class="sub">今の選択を保存</button>
+          <button id="presetDelete" type="button" class="sub">削除</button>
+        </div>
+        <input id="folderFileFilter" class="side-filter" placeholder="ファイルを絞り込み">
+        <div id="folderFileList" class="check-list"></div>
+        <label>追加設定 <span class="muted">選んだファイルの後に読ませる</span>
+          <textarea id="f_files_extra" rows="2"></textarea></label>
+      </div>
+
+      <div class="box" id="charBox">
+        <div class="box-title">画像のキャラ固定</div>
+        <div class="muted">キャラが写る画像に、ここの外見タグが自動で前に付く。AIがキャラの初登場時に作って置く。🔒固定するとAIは書き換えない。
+          同じ名前のキャラプリセットがあれば、初登場時にプリセットのタグが使われる（全チャンネル共通）。</div>
+        <div id="charList"></div>
+        <div class="row tight">
+          <select id="charPresetSelect"><option value="">キャラプリセット…</option></select>
+          <button id="charPresetAdd" type="button" class="sub">このチャンネルに追加</button>
+          <button id="charPresetDelete" type="button" class="sub">プリセット削除</button>
+          <button id="charNew" type="button" class="sub">＋手動で追加</button>
+        </div>
+      </div>
+
+      <label>タイトル<input id="f_title"></label>
+      <label>プロジェクト <span class="muted">サイドバーでの分類</span>
+        <input id="f_project" list="projectList"><datalist id="projectList"></datalist></label>
+      <label>概要 <span class="muted">このチャンネルがどんな話か。AIが毎回読む</span>
+        <textarea id="f_summary" rows="3"></textarea></label>
+      <label>指示 <span class="muted">AIへの書き方・方針（文体、長さ、画像の傾向など）</span>
+        <textarea id="f_instructions" rows="3"></textarea></label>
+      <label>AIメモ <span class="muted">進行・あらすじ。AIが必要なときに更新（手で直してもOK）</span>
+        <textarea id="f_memo" rows="3"></textarea></label>
+      <label class="check" title="AI が応答のたびに、場面に出ているキャラの今の状態（外見・服装・姿勢など）を箇条書きで、内心・本音を文で書く。次の入力を受け取るたびに、前の応答のときの状態を毎回読んでから書く。応答ごとに残すので、巻き戻し・作り直しをするとそのときの状態に戻る"><input type="checkbox" id="f_rp_state"> キャラの状態と内心を記録する <span class="muted">応答の下の「📋 状態」で見る。直すのは応答の「状態」ボタン</span></label>
+      <div class="grid2">
+        <label>あなたの呼び名<input id="f_user_name"></label>
+        <label>キャラ名<input id="f_char_name"></label>
+        <label>年齢<input id="f_char_age"></label>
+        <label>口調<input id="f_char_speech"></label>
+      </div>
+      <label>キャラ設定<textarea id="f_char_profile" rows="2"></textarea></label>
+      <label>舞台・状況<textarea id="f_scenario" rows="2"></textarea></label>
+      <label>最初のメッセージ <span class="muted">会話リセット時に表示</span>
+        <textarea id="f_first_message" rows="2"></textarea></label>
+      <details>
+        <summary>画像設定 (JSON) <span class="muted">character_tags は全画像に毎回付く共通タグ</span></summary>
+        <textarea id="f_image" rows="10" spellcheck="false" class="mono"></textarea>
+      </details>
+      <details id="phoneBox">
+        <summary>スマホで開く</summary>
+        <div id="phoneOn" hidden>
+          <img id="phoneQr" class="phone-qr" alt="スマホで開くアドレスの QR コード">
+          <div class="row tight"><code id="phoneUrl"></code><button id="phoneCopy" type="button" class="sub">コピー</button></div>
+        </div>
+        <div id="phoneOff" class="muted">スマホから使うときは、いま開いている黒いウィンドウを閉じて、start_mobile.bat で起動し直す。ここにアドレスと QR コードが出る</div>
+      </details>
+      <details id="appSettings">
+        <summary>アプリ全体の設定</summary>
+        <label class="check" title="「＋」で新しいチャンネルを作ったら、session フォルダに Antigravity の新規会話も作って担当にする。分岐で作ったチャンネルは元の会話を分岐するので別"><input type="checkbox" id="app_new_channel_ide"> 新しいチャンネルには Antigravity の新規会話を自動で作る</label>
+        <div class="row tight"><button id="appSave" type="button" class="sub">アプリ設定を保存</button><span id="appMsg" class="muted"></span></div>
+      </details>
+    </div>
+    <div class="row">
+      <button id="settingSave">保存</button>
+      <button id="dupBtn" class="sub">複製</button>
+      <button id="exportBtn" class="sub">書き出し</button>
+      <button id="rawBtn" class="sub">JSON編集</button>
+      <button id="resetBtn" class="danger">会話リセット</button>
+      <button id="deleteSession" class="danger">チャンネル削除</button>
+      <span id="settingMsg" class="muted"></span>
+    </div>
+  </section>
+
+  <main id="chatLog"></main>
+
+  <footer>
+    <div id="footBar" class="foot-bar hidden">
+      <label class="ide-model" title="アプリが合図を送るときに使うモデル。合図で始まるターンはこのモデルで動く（Antigravity の画面で自分で打ったターンは、画面で選んだモデルのまま）">モデル<select id="ideModel">
+        <option value="">会話の最後の入力と同じ</option>
+      </select></label>
+      <button id="ideModelReload" type="button" class="sub" title="Antigravity のモデル一覧と残りの利用枠を読み直す">↻</button>
+    </div>
+    <div id="attachList" class="attach-list hidden"></div>
+    <div class="foot-input">
+      <button id="attachBtn" type="button" title="画像やファイルを添付（貼り付け・ドロップでも付けられる）">📎</button>
+      <input id="attachInput" type="file" multiple hidden>
+      <textarea id="messageInput" rows="2" placeholder="セリフや行動を入力…（Ctrl+Enterで送信）"></textarea>
+      <button id="sendBtn">送信</button>
+    </div>
+  </footer>
+</div>
+<!-- スマホでチャンネル一覧を開いているとき、右側（一覧の外）をタップすると閉じる -->
+<div id="sideBackdrop"></div>
+<div id="toast" class="hidden"></div>
+
+<div id="lightbox" class="hidden"><img id="lightboxImg" alt=""></div>
+
+<div id="promptModal" class="modal hidden">
+  <div class="modal-content">
+    <h2>画像プロンプト</h2>
+    <textarea id="promptEdit" spellcheck="false"></textarea>
+    <div class="hint" id="promptFinal"></div>
+    <div class="modal-actions">
+      <button id="promptCancel" class="sub">閉じる</button>
+      <button id="promptRegen">このプロンプトで再生成</button>
+    </div>
+  </div>
+</div>
+<div id="editModal" class="modal hidden">
+  <div class="modal-content">
+    <h2 id="editTitle">過去発言を編集</h2>
+    <p id="editHint" class="hint"></p>
+    <textarea id="editText" class="modal-textarea" rows="10"></textarea>
+    <div class="modal-actions">
+      <button id="editCancel" class="sub">キャンセル</button>
+      <button id="editSave">保存</button>
+    </div>
+  </div>
+</div>
+<div id="textModal" class="modal hidden">
+  <div class="modal-content wide">
+    <h2 id="textTitle"></h2>
+    <p id="textHint" class="hint"></p>
+    <textarea id="textBody" class="modal-textarea mono" rows="20" spellcheck="false"></textarea>
+    <div class="modal-actions">
+      <button id="textCancel" class="sub">閉じる</button>
+      <button id="textSave">保存</button>
+    </div>
+  </div>
+</div>
+<div id="ideModal" class="modal hidden">
+  <div class="modal-content rag-modal">
+    <h2>担当にする Antigravity の会話</h2>
+    <div class="row tight ide-search">
+      <input id="ideQuery" placeholder="タイトル・フォルダで検索（全フォルダから）">
+      <button id="ideRefresh" type="button" class="sub" title="Antigravity の会話一覧を読み直す">更新</button>
+    </div>
+    <div class="rag-layout">
+      <div class="rag-left" id="ideFolders"></div>
+      <div class="rag-right" id="ideConvs"></div>
+    </div>
+    <div class="row tight ide-search">
+      <input id="ideIdInput" placeholder="会話IDを直接入力（例: 10024347-0254-...）">
+      <button id="ideIdSet" type="button" class="sub">このIDにする</button>
+    </div>
+    <div class="modal-actions"><button id="ideModalClose" class="sub">閉じる</button></div>
+  </div>
+</div>
+<div id="forkModal" class="modal hidden">
+  <div class="modal-content rag-modal">
+    <h2>会話を分岐</h2>
+    <p class="hint"><span id="forkSrc"></span><br>選んだ発言の直前までをコピーした新しい会話を作ります。元の会話はそのまま残ります。</p>
+    <div class="row tight form">
+      <label class="check"><input type="checkbox" id="forkAssign" checked> 分岐した会話をこのチャンネルの担当にする</label>
+      <label class="check"><input type="checkbox" id="forkHideSpace" checked> 合図（スペースだけ）の発言を隠す</label>
+    </div>
+    <div class="row tight form">
+      <label class="check" title="分岐した会話は元と同じフォルダにできる。別のフォルダへ移すには Antigravity の再起動が要る（分岐のあと確かめてから）"><input type="checkbox" id="forkMove"> 分岐した会話を別のフォルダへ移す（Antigravity を再起動）</label>
+      <input id="forkMoveTo" spellcheck="false" placeholder="移す先のフォルダ（session の下の名前か絶対パス）" disabled>
+    </div>
+    <div class="row tight"><button id="forkLatest" type="button" class="sub" title="最後のステップまで全部コピーして分岐する">最新の状態で分岐</button></div>
+    <div class="rag-right fork-turns" id="forkTurns"></div>
+    <div class="modal-actions"><button id="forkClose" class="sub">閉じる</button></div>
+  </div>
+</div>
+<div id="ragModal" class="modal hidden">
+  <div class="modal-content rag-modal">
+    <h2>RAG 知識ベース</h2>
+    <p class="hint">選択したコレクションは、このチャンネルの次のAI応答から参照されます。</p>
+    <div class="rag-layout">
+      <div class="rag-left">
+        <div class="rag-create"><input id="ragName" placeholder="新しいコレクション"><button id="ragCreate">＋</button></div>
+        <div id="ragCollections"></div>
+      </div>
+      <div class="rag-right">
+        <div id="ragEntries" class="rag-entries"></div>
+        <div id="ragEditor" class="hidden">
+          <input id="ragEntryTitle" placeholder="タイトル">
+          <textarea id="ragEntryContent" rows="6" placeholder="内容"></textarea>
+          <div class="modal-actions"><button id="ragEditCancel" class="sub">キャンセル</button><button id="ragEntrySave">保存</button></div>
+        </div>
+      </div>
+    </div>
+    <div class="modal-actions"><button id="ragClose" class="sub">閉じる</button></div>
+  </div>
+</div>
+<script src="app.js?v=20"></script>
+</body>
+</html>

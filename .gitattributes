@@ -1,0 +1,2 @@
+# Windows のバッチは Shift-JIS・CRLF のまま保存する（変換すると cmd が読み違える）
+*.bat -text
