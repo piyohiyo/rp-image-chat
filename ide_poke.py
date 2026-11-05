@@ -445,7 +445,6 @@ def hub_server():
             if code == 200:
                 _hub = (port, tok)
                 return _hub
-            break
     return None
 
 
